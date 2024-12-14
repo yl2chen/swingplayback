@@ -170,6 +170,7 @@ func (v *VideoFrameBuffer) Append(frame gocv.Mat) {
 		v.frames[v.idx] = frame
 		v.idx++
 	} else {
+		v.frames[0].Close()
 		v.frames = append(v.frames[1:], frame)
 	}
 }
