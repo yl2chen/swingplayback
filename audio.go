@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"text/template"
@@ -12,11 +13,13 @@ import (
 )
 
 const (
-	DefaultClubStrikeDecibelThreshold = 75.0
+	DefaultClubStrikeDecibelThreshold = 90.0
+	DefaultMinDetectionInterval       = 5 * time.Second
 )
 
 var tmpl = template.Must(template.New("").Parse(
-	`{{. | len}} host APIs: {{range .}}
+	`==================================================================================================
+{{. | len}} host APIs: {{range .}}
 	Name:                   {{.Name}}
 	{{if .DefaultInputDevice}}Default input device:   {{.DefaultInputDevice.Name}}{{end}}
 	{{if .DefaultOutputDevice}}Default output device:  {{.DefaultOutputDevice.Name}}{{end}}
@@ -30,23 +33,24 @@ var tmpl = template.Must(template.New("").Parse(
 		DefaultHighOutputLatency:  {{.DefaultHighOutputLatency}}
 		DefaultSampleRate:         {{.DefaultSampleRate}}
 	{{end}}
-{{end}}`,
+{{end}}
+==================================================================================================`,
 ))
 
 type Audio struct {
-	detection        chan time.Time
+	detection        chan Detection
 	decibleThreshold float64
 }
 
 func NewAudio(decibelThreshold float64) (*Audio, error) {
 	a := &Audio{
-		detection:        make(chan time.Time),
+		detection:        make(chan Detection),
 		decibleThreshold: decibelThreshold,
 	}
 	return a, nil
 }
 
-func (a *Audio) StartDetection() (err error) {
+func (a *Audio) StartDetection(minDetectionInterval time.Duration) (err error) {
 	// Initialize PortAudio
 	if err = portaudio.Initialize(); err != nil {
 		return fmt.Errorf("error initializing PortAudio: %w", err)
@@ -102,13 +106,21 @@ func (a *Audio) StartDetection() (err error) {
 	}
 
 	detectTicker := time.NewTicker(detectInterval).C
+	var lastDetection time.Time
 	for range detectTicker {
 		mutex.RLock()
 
 		decibels := calculateDecibels(bite)
-		fmt.Printf("Sound level: %f dB\n", decibels)
-		if decibels > a.decibleThreshold {
-			a.detection <- time.Now()
+		// sample 1 in 5
+		if rand.Float64() > 0.8 {
+			fmt.Printf("Sound level: %f dB\n", decibels)
+		}
+		if decibels > a.decibleThreshold && time.Now().Add(-minDetectionInterval).After(lastDetection) {
+			lastDetection = time.Now()
+			a.detection <- Detection{
+				Decibel:       decibels,
+				DetectionTime: time.Now(),
+			}
 		}
 
 		mutex.RUnlock()
@@ -116,76 +128,9 @@ func (a *Audio) StartDetection() (err error) {
 	return nil
 }
 
-func (a *Audio) DetectAboveThreshold() <-chan time.Time {
+func (a *Audio) DetectAboveThreshold() <-chan Detection {
 	return a.detection
 }
-
-// // normalize converts audio samples to values between -1 and 1
-// func normalize(samples []float64) []float64 {
-// 	max := 0.0
-// 	for _, sample := range samples {
-// 		if math.Abs(sample) > max {
-// 			max = math.Abs(sample)
-// 		}
-// 	}
-// 	for i := range samples {
-// 		samples[i] /= max
-// 	}
-// 	return samples
-// }
-
-// // normalize computes the magnitude of a signal
-// func normalize(signal []float64) float64 {
-// 	var sum float64
-// 	for _, v := range signal {
-// 		sum += v * v
-// 	}
-// 	return math.Sqrt(sum)
-// }
-
-// // crossCorrelation computes the cross-correlation between a signal and a pattern
-// func crossCorrelation(signal, pattern []float64) []float64 {
-// 	if len(pattern) > len(signal) {
-// 		return nil
-// 	}
-
-// 	result := make([]float64, len(signal)-len(pattern)+1)
-
-// 	for i := 0; i < len(signal)-len(pattern)+1; i++ {
-// 		var sum float64
-// 		for j := 0; j < len(pattern); j++ {
-// 			sum += signal[i+j] * pattern[j]
-// 		}
-// 		result[i] = sum
-// 	}
-
-// 	return result
-// }
-
-// // computeSimilarity computes similarity score between signal and pattern, require len(signal) >= len(pattern).
-// func computeSimilarity(signal, pattern []float64) (similarity float64) {
-// 	// Normalize to determine similarity
-// 	signalNorm := normalize(signal)
-// 	patternNorm := normalize(pattern)
-// 	if signalNorm == 0 || patternNorm == 0 {
-// 		return 0
-// 	}
-
-// 	correlation := crossCorrelation(signal, pattern)
-// 	if len(correlation) == 0 {
-// 		return 0
-// 	}
-// 	max := correlation[0]
-// 	for _, value := range correlation {
-// 		if value > max {
-// 			max = value
-// 		}
-// 	}
-// 	fmt.Println("Max correlation: ", max, signalNorm, patternNorm)
-// 	similarity = max / (signalNorm * patternNorm)
-
-// 	return similarity
-// }
 
 // calculateDecibels converts RMS to decibels (dB)
 func calculateDecibels(signal []float64) float64 {
@@ -207,4 +152,9 @@ func calculateRMS(samples []float64) float64 {
 	}
 	mean := sum / float64(len(samples))
 	return math.Sqrt(mean)
+}
+
+type Detection struct {
+	Decibel       float64
+	DetectionTime time.Time
 }

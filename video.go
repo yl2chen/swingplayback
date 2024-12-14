@@ -10,11 +10,16 @@ import (
 
 const (
 	// frames per second for the cameras
-	DefaultFPS float64 = 120
+	DefaultFPS       = 120.0
+	DefaultCamWidth  = 1280
+	DefaultCamHeight = 720
+
 	// default playback speed at half speed
 	DefaultPlaybackSpeed = 0.5
 	// records 3 seconds before and after impact
 	DefaultSecondsToRecord = 6
+	// duration of video to capture after event
+	DefaultDurationToCaptureAfterEvent = 3 * time.Second
 )
 
 type VideoProfileEnum string
@@ -26,11 +31,11 @@ type VideoProfiles struct {
 }
 
 func NewVideoProfiles() (*VideoProfiles, error) {
-	front, err := NewVideoProfile("front", 0)
+	front, err := NewVideoProfile("front", 0, DefaultDurationToCaptureAfterEvent)
 	if err != nil {
 		return nil, fmt.Errorf("error opening front camera (0): %w", err)
 	}
-	back, err := NewVideoProfile("back", 1)
+	back, err := NewVideoProfile("back", 1, DefaultDurationToCaptureAfterEvent)
 	if err != nil {
 		return nil, fmt.Errorf("error opening back camera (1): %w", err)
 	}
@@ -55,9 +60,9 @@ func (v *VideoProfiles) Start(frontWindow, backWindow *VideoPlaybackWindow) {
 	wg.Wait()
 }
 
-func (v *VideoProfiles) Save() {
-	v.front.Save()
-	v.back.Save()
+func (v *VideoProfiles) Save(detection Detection) {
+	go v.front.Save(detection)
+	go v.back.Save(detection)
 }
 
 func (v *VideoProfiles) Stop() {
@@ -66,26 +71,40 @@ func (v *VideoProfiles) Stop() {
 }
 
 type VideoProfile struct {
-	name string
-	cam  *gocv.VideoCapture
+	name                        string
+	cam                         *gocv.VideoCapture
+	durationToCaptureAfterEvent time.Duration
 
 	stop chan struct{}
 	save chan struct{}
 }
 
-func NewVideoProfile(name string, device int) (*VideoProfile, error) {
+func NewVideoProfile(name string, device int, durationToCaptureAfterEvent time.Duration) (*VideoProfile, error) {
 	cam, err := gocv.VideoCaptureDevice(device)
 	if err != nil {
 		return nil, fmt.Errorf("error opening front camera (0): %w", err)
 	}
 
-	width, height := 1280, 720
-	cam.Set(gocv.VideoCaptureFrameWidth, float64(width))
-	cam.Set(gocv.VideoCaptureFrameHeight, float64(height))
+	cam.Set(gocv.VideoCaptureFrameWidth, float64(DefaultCamWidth))
+	cam.Set(gocv.VideoCaptureFrameHeight, float64(DefaultCamHeight))
+	cam.Set(gocv.VideoCaptureFPS, DefaultFPS)
+
+	// Retrieve camera properties
+	width := cam.Get(gocv.VideoCaptureFrameWidth)
+	height := cam.Get(gocv.VideoCaptureFrameHeight)
+	fps := cam.Get(gocv.VideoCaptureFPS)
+
+	// Print camera details
+	fmt.Println("==================================================")
+	fmt.Printf("Camera Details %s (device=%d):\n", name, device)
+	fmt.Printf("Resolution: %.0fx%.0f\n", width, height)
+	fmt.Printf("FPS: %.2f\n", fps)
+	fmt.Println("==================================================")
 
 	return &VideoProfile{
-		name: name,
-		cam:  cam,
+		name:                        name,
+		cam:                         cam,
+		durationToCaptureAfterEvent: durationToCaptureAfterEvent,
 
 		stop: make(chan struct{}),
 		save: make(chan struct{}),
@@ -93,7 +112,7 @@ func NewVideoProfile(name string, device int) (*VideoProfile, error) {
 }
 
 func (v *VideoProfile) Start(secondsToRecord int, window *VideoPlaybackWindow) (err error) {
-	fmt.Printf("starting video capture for %s\n", v.name)
+	fmt.Printf(">>>>>>>> starting video capture for %s\n", v.name)
 	frameBuffer := NewVideoFrameBuffer(int(DefaultFPS) * secondsToRecord)
 
 	frame := gocv.NewMat()
@@ -116,7 +135,12 @@ func (v *VideoProfile) Start(secondsToRecord int, window *VideoPlaybackWindow) (
 			// Format time to a readable format
 			t := time.Now().Format("2006-01-02 15-04-05")
 			file := fmt.Sprintf("videos/%s %s.avi", t, v.name)
-			if err := frameBuffer.Save(file, int(v.cam.Get(gocv.VideoCaptureFrameWidth)), int(v.cam.Get(gocv.VideoCaptureFrameHeight)), DefaultFPS); err != nil {
+			if err := frameBuffer.Save(
+				file,
+				int(v.cam.Get(gocv.VideoCaptureFrameWidth)),
+				int(v.cam.Get(gocv.VideoCaptureFrameHeight)),
+				float64(v.cam.Get(gocv.VideoCaptureFPS)),
+			); err != nil {
 				fmt.Printf("error saving video: %v\n", err)
 				continue
 			}
@@ -136,7 +160,7 @@ func (v *VideoProfile) Start(secondsToRecord int, window *VideoPlaybackWindow) (
 			frameBuffer.Append(frame.Clone())
 		}
 	}
-	fmt.Printf("video profile capturing stopped for camera %s\n", v.name)
+	fmt.Printf(">>>>>>>> video profile capturing stopped for camera %s\n", v.name)
 	return nil
 }
 
@@ -144,7 +168,11 @@ func (v *VideoProfile) Stop() {
 	v.stop <- struct{}{}
 }
 
-func (v *VideoProfile) Save() {
+func (v *VideoProfile) Save(detection Detection) {
+	elapsed := time.Since(detection.DetectionTime)
+	delay := v.durationToCaptureAfterEvent - elapsed
+	fmt.Printf("delaying saving video by %s\n", delay)
+	time.Sleep(delay)
 	v.save <- struct{}{}
 }
 
@@ -181,6 +209,11 @@ func (v *VideoFrameBuffer) Save(file string, width, height int, fps float64) (er
 	if !v.Full() {
 		return fmt.Errorf("video frame buffer is not full (%d/%d)", v.idx, len(v.frames))
 	}
+	fmt.Printf("--------------------------------------------------\n")
+	fmt.Printf("video frame buffer is full (%d)\nparameters:\n\twidth: %d\n\theight: %d\n\tfps: %f\n",
+		len(v.frames), width, height, fps)
+	fmt.Printf("--------------------------------------------------\n")
+
 	videoWriter, err := gocv.VideoWriterFile(file, "MJPG", fps, width, height, true)
 	if err != nil {
 		return fmt.Errorf("error creating video writer: %w", err)
@@ -238,7 +271,7 @@ func (v *VideoPlayback) Start(playbackSpeed float64, window *VideoPlaybackWindow
 		for {
 			// Read a frame from the video
 			if ok := video.Read(&f); !ok {
-				fmt.Printf("Restarting %s video playback\n", v.camName)
+				fmt.Printf(">>>>>>>> Restarting %s video playback\n", v.camName)
 				break
 			}
 			if f.Empty() {
@@ -247,7 +280,7 @@ func (v *VideoPlayback) Start(playbackSpeed float64, window *VideoPlaybackWindow
 
 			select {
 			case <-v.stop:
-				fmt.Printf("%s video playback stopped\n", v.camName)
+				fmt.Printf(">>>>>>>> %s video playback stopped\n", v.camName)
 				return
 			default:
 			}

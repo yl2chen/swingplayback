@@ -18,7 +18,7 @@ func start() {
 		fmt.Printf("Error creating audio: %v\n", err)
 		return
 	}
-	go audio.StartDetection()
+	go audio.StartDetection(DefaultMinDetectionInterval)
 
 	// start video recording
 	video, err := NewVideoProfiles()
@@ -29,18 +29,12 @@ func start() {
 
 	// detect club strikes using high decibel as proxy
 	go func() {
-		for range audio.DetectAboveThreshold() {
-			fmt.Println("High decibel sound bite detected, saving videos...")
-			video.Save()
+		for detection := range audio.DetectAboveThreshold() {
+			fmt.Printf(">>>>>>>> High decibel sound bite detected (%f DB @ %s), saving videos...\n",
+				detection.Decibel, detection.DetectionTime.Format("15:04:05"))
+			go video.Save(detection)
 		}
 	}()
-
-	// go func() {
-	// 	for {
-	// 		time.Sleep(10 * time.Second)
-	// 		video.Save()
-	// 	}
-	// }()
 
 	// Create a window to display the video
 	windowFront := NewVideoPlaybackWindow("Video Player Front")
