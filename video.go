@@ -15,11 +15,11 @@ const (
 	DefaultCamHeight = 720
 
 	// default playback speed at half speed
-	DefaultPlaybackSpeed = 0.5
+	DefaultPlaybackSpeed = 0.25
 	// records 3 seconds before and after impact
-	DefaultSecondsToRecord = 6
+	DefaultSecondsToRecord = 4
 	// duration of video to capture after event
-	DefaultDurationToCaptureAfterEvent = 3 * time.Second
+	DefaultDurationToCaptureAfterEvent = DefaultSecondsToRecord * time.Second / 2
 )
 
 type VideoProfileEnum string
