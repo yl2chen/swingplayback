@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	DefaultClubStrikeDecibelThreshold = 90.0
+	DefaultClubStrikeDecibelThreshold = 80.0
 	DefaultMinDetectionInterval       = 5 * time.Second
 )
 
@@ -61,14 +61,14 @@ func (a *Audio) StartDetection(minDetectionInterval time.Duration) (err error) {
 	_ = tmpl.Execute(os.Stdout, hs)
 
 	// Set up audio parameters
-	const sampleRate = 44100
-	const seconds = 0.1
+	const sampleRate = 24000
+	const seconds = 0.05
 	const maxSignalLength = sampleRate * seconds
 	const channels = 1
 	const detectInterval = time.Millisecond * 100
 
 	// Create a buffer to hold the recorded audio
-	buffer := make([]int32, 1024)
+	buffer := make([]int32, maxSignalLength)
 	var bite []float64
 	var mutex sync.RWMutex
 
