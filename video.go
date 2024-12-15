@@ -157,7 +157,11 @@ func (v *VideoProfile) Start(secondsToRecord int, window *VideoPlaybackWindow) (
 			if ok := v.cam.Read(&frame); !ok {
 				continue
 			}
-			frameBuffer.Append(frame.Clone())
+			cloned := gocv.NewMat()
+			// Rotate the frame by 180 degrees
+			gocv.Rotate(frame, &cloned, gocv.Rotate180Clockwise)
+
+			frameBuffer.Append(cloned)
 		}
 	}
 	fmt.Printf(">>>>>>>> video profile capturing stopped for camera %s\n", v.name)
